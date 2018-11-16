@@ -23,8 +23,8 @@ android {
 }
 
 dependencies {
-    implementation project(':rxbluetooth')
-    //implementation 'com.github.ivbaranov:rxbluetooth2:2.0.4'
+    //implementation project(':rxbluetooth')
+    implementation 'com.github.ivbaranov:rxbluetooth2:2.0.4'
     implementation "com.android.support:appcompat-v7:$SUPPORT_LIBRARY_VERSION"
     implementation "com.android.support:design:$SUPPORT_LIBRARY_VERSION"
 }

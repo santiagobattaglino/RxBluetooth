@@ -113,6 +113,8 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, final int position, long id) {
 
+                Log.d(TAG, "onItemClick: " + devices.get(position).getName());
+
                 compositeDisposable.add(rxBluetooth.observeFetchDeviceUuids(devices.get(position))
                         .observeOn(AndroidSchedulers.mainThread())
                         .subscribeOn(Schedulers.computation())
@@ -120,25 +122,9 @@ public class MainActivity extends AppCompatActivity {
                             @Override
                             public void accept(final Parcelable[] uuids) {
                                 Log.d(TAG, "observeFetchDeviceUUIDs UUID[0]: " + uuids[0]);
-                                //connectAsServer("servername", uuids[0].toString());
+                                //connectAsServer("myserver", uuids[0].toString());
+                                //connectAsServerInsecure("myserver", uuids[0].toString());
                                 //connectAsClient(devices.get(position), uuids[0].toString());
-
-                                connectAsServerInsecure("servername", UUID.fromString(uuids[0].toString()))
-                                        .observeOn(AndroidSchedulers.mainThread())
-                                        .subscribeOn(Schedulers.computation())
-                                        .subscribe(new Consumer<BluetoothSocket>() {
-                                            @Override
-                                            public void accept(BluetoothSocket socket) {
-                                                Log.d(TAG, "connectAsServer. Socket Remote Device Name: " + socket.getRemoteDevice().getName());
-                                                connectAsClient(socket.getRemoteDevice(), uuids[0].toString());
-                                            }
-                                        }, new Consumer<Throwable>() {
-                                            @Override
-                                            public void accept(Throwable throwable) {
-                                                Log.d(TAG, "Error connectAsServer: " + throwable.getMessage());
-                                            }
-                                        });
-
                             }
                         }, new Consumer<Throwable>() {
                             @Override
@@ -155,6 +141,7 @@ public class MainActivity extends AppCompatActivity {
             Log.d(TAG, "Bluetooth is not supported!");
         } else {
             initEventListeners();
+            doStart();
             // check if bluetooth is currently enabled and ready for use
             if (!rxBluetooth.isBluetoothEnabled()) {
                 // to enable bluetooth via startActivityForResult()
@@ -168,8 +155,41 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void connectAsServer(final String uuid) {
-        compositeDisposable.add(rxBluetooth.connectAsServer("servername", UUID.fromString(uuid))
+    private void connectAsServerInsecure(String servername, final String uuid) {
+        compositeDisposable.add(rxConnectAsServerInsecure(servername, UUID.fromString(uuid))
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<BluetoothSocket>() {
+                    @Override
+                    public void accept(BluetoothSocket socket) {
+                        Log.d(TAG, "connectAsServerInsecure. Socket Remote Device Name: " + socket.getRemoteDevice().getName());
+                        connectAsClient(socket.getRemoteDevice(), uuid);
+                    }
+                }, new Consumer<Throwable>() {
+                    @Override
+                    public void accept(Throwable throwable) {
+                        Log.d(TAG, "Error connectAsServerInsecure: " + throwable.getMessage());
+                    }
+                }));
+    }
+
+    private Single<BluetoothSocket> rxConnectAsServerInsecure(final String name, final UUID uuid) {
+        return Single.create(new SingleOnSubscribe<BluetoothSocket>() {
+            @Override
+            public void subscribe(@io.reactivex.annotations.NonNull SingleEmitter<BluetoothSocket> emitter) {
+                try {
+                    try (BluetoothServerSocket bluetoothServerSocket = BluetoothAdapter.getDefaultAdapter().listenUsingInsecureRfcommWithServiceRecord(name, uuid)) {
+                        emitter.onSuccess(bluetoothServerSocket.accept());
+                    }
+                } catch (IOException e) {
+                    emitter.onError(e);
+                }
+            }
+        });
+    }
+
+    private void connectAsServer(String servername, final String uuid) {
+        compositeDisposable.add(rxBluetooth.connectAsServer(servername, UUID.fromString(uuid))
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribeOn(Schedulers.computation())
                 .subscribe(new Consumer<BluetoothSocket>() {
@@ -184,21 +204,6 @@ public class MainActivity extends AppCompatActivity {
                         Log.d(TAG, "Error connectAsServer: " + throwable.getMessage());
                     }
                 }));
-    }
-
-    public Single<BluetoothSocket> connectAsServerInsecure(final String name, final UUID uuid) {
-        return Single.create(new SingleOnSubscribe<BluetoothSocket>() {
-            @Override
-            public void subscribe(@io.reactivex.annotations.NonNull SingleEmitter<BluetoothSocket> emitter) {
-                try {
-                    try (BluetoothServerSocket bluetoothServerSocket = BluetoothAdapter.getDefaultAdapter().listenUsingInsecureRfcommWithServiceRecord(name, uuid)) {
-                        emitter.onSuccess(bluetoothServerSocket.accept());
-                    }
-                } catch (IOException e) {
-                    emitter.onError(e);
-                }
-            }
-        });
     }
 
     private void connectAsClient(BluetoothDevice device, String uuid) {
@@ -395,17 +400,7 @@ public class MainActivity extends AppCompatActivity {
         start.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                devices.clear();
-                setAdapter(devices);
-                if (ContextCompat.checkSelfPermission(MainActivity.this,
-                        android.Manifest.permission.ACCESS_COARSE_LOCATION)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    ActivityCompat.requestPermissions(MainActivity.this,
-                            new String[]{android.Manifest.permission.ACCESS_COARSE_LOCATION},
-                            REQUEST_PERMISSION_COARSE_LOCATION);
-                } else {
-                    rxBluetooth.startDiscovery();
-                }
+                doStart();
             }
         });
         stop.setOnClickListener(new View.OnClickListener() {
@@ -414,6 +409,20 @@ public class MainActivity extends AppCompatActivity {
                 rxBluetooth.cancelDiscovery();
             }
         });
+    }
+
+    private void doStart() {
+        devices.clear();
+        setAdapter(devices);
+        if (ContextCompat.checkSelfPermission(MainActivity.this,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(MainActivity.this,
+                    new String[]{android.Manifest.permission.ACCESS_COARSE_LOCATION},
+                    REQUEST_PERMISSION_COARSE_LOCATION);
+        } else {
+            rxBluetooth.startDiscovery();
+        }
     }
 
     private void addDevice(BluetoothDevice device) {
