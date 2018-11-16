@@ -31,7 +31,6 @@ import com.github.ivbaranov.rxbluetooth.RxBluetooth;
 import com.github.ivbaranov.rxbluetooth.events.AclEvent;
 import com.github.ivbaranov.rxbluetooth.events.BondStateEvent;
 import com.github.ivbaranov.rxbluetooth.events.ConnectionStateEvent;
-import com.github.ivbaranov.rxbluetooth.predicates.BtPredicate;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -112,27 +111,8 @@ public class MainActivity extends AppCompatActivity {
             @SuppressLint("CheckResult")
             @Override
             public void onItemClick(AdapterView<?> parent, View view, final int position, long id) {
-
                 Log.d(TAG, "onItemClick: " + devices.get(position).getName());
-
-                compositeDisposable.add(rxBluetooth.observeFetchDeviceUuids(devices.get(position))
-                        .observeOn(AndroidSchedulers.mainThread())
-                        .subscribeOn(Schedulers.computation())
-                        .subscribe(new Consumer<Parcelable[]>() {
-                            @Override
-                            public void accept(final Parcelable[] uuids) {
-                                Log.d(TAG, "observeFetchDeviceUUIDs UUID[0]: " + uuids[0]);
-                                //connectAsServer("myserver", uuids[0].toString());
-                                //connectAsServerInsecure("myserver", uuids[0].toString());
-                                //connectAsClient(devices.get(position), uuids[0].toString());
-                            }
-                        }, new Consumer<Throwable>() {
-                            @Override
-                            public void accept(Throwable throwable) {
-                                Log.d(TAG, "Error observeFetchDeviceUUIDs: " + throwable.getMessage());
-                            }
-                        }));
-
+                observeFetchDeviceUuids(devices.get(position));
             }
         });
 
@@ -155,7 +135,73 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (rxBluetooth != null) {
+            // Make sure we're not doing discovery anymore
+            Log.d(TAG, "cancelDiscovery");
+            rxBluetooth.cancelDiscovery();
+        }
+        Log.d(TAG, "compositeDisposable dispose");
+        compositeDisposable.dispose();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String permissions[], @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_PERMISSION_COARSE_LOCATION) {
+            for (String permission : permissions) {
+                if (android.Manifest.permission.ACCESS_COARSE_LOCATION.equals(permission)) {
+                    // Start discovery if permission granted
+                    Log.d(TAG, "startDiscovery");
+                    rxBluetooth.startDiscovery();
+                }
+            }
+        }
+    }
+
+    private void observeFetchDeviceUuids(final BluetoothDevice device) {
+        compositeDisposable.add(rxBluetooth.observeFetchDeviceUuids(device)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<Parcelable[]>() {
+                    @Override
+                    public void accept(final Parcelable[] uuids) {
+                        Log.d(TAG, "observeFetchDeviceUUIDs UUID[0]: " + uuids[0]);
+                        //connectAsServer("myserver", uuids[0].toString());
+                        //connectAsServerInsecure("myserver", uuids[0].toString());
+                        connectAsClient(device, uuids[0].toString());
+                    }
+                }, new Consumer<Throwable>() {
+                    @Override
+                    public void accept(Throwable throwable) {
+                        Log.d(TAG, "Error observeFetchDeviceUUIDs: " + throwable.getMessage());
+                    }
+                }));
+    }
+
+    private void connectAsServer(String servername, final String uuid) {
+        Log.d(TAG, "rxBluetooth.connectAsServer");
+        compositeDisposable.add(rxBluetooth.connectAsServer(servername, UUID.fromString(uuid))
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<BluetoothSocket>() {
+                    @Override
+                    public void accept(BluetoothSocket socket) {
+                        Log.d(TAG, "connectAsServer. Socket Remote Device Name: " + socket.getRemoteDevice().getName());
+                        connectAsClient(socket.getRemoteDevice(), uuid);
+                    }
+                }, new Consumer<Throwable>() {
+                    @Override
+                    public void accept(Throwable throwable) {
+                        Log.d(TAG, "Error connectAsServer: " + throwable.getMessage());
+                    }
+                }));
+    }
+
     private void connectAsServerInsecure(String servername, final String uuid) {
+        Log.d(TAG, "rxBluetooth.connectAsServerInsecure");
         compositeDisposable.add(rxConnectAsServerInsecure(servername, UUID.fromString(uuid))
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribeOn(Schedulers.computation())
@@ -188,25 +234,8 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void connectAsServer(String servername, final String uuid) {
-        compositeDisposable.add(rxBluetooth.connectAsServer(servername, UUID.fromString(uuid))
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<BluetoothSocket>() {
-                    @Override
-                    public void accept(BluetoothSocket socket) {
-                        Log.d(TAG, "connectAsServer. Socket Remote Device Name: " + socket.getRemoteDevice().getName());
-                        connectAsClient(socket.getRemoteDevice(), uuid);
-                    }
-                }, new Consumer<Throwable>() {
-                    @Override
-                    public void accept(Throwable throwable) {
-                        Log.d(TAG, "Error connectAsServer: " + throwable.getMessage());
-                    }
-                }));
-    }
-
     private void connectAsClient(BluetoothDevice device, String uuid) {
+        Log.d(TAG, "rxBluetooth.connectAsClient");
         compositeDisposable.add(rxBluetooth.connectAsClient(device, UUID.fromString(uuid))
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribeOn(Schedulers.computation())
@@ -242,32 +271,6 @@ public class MainActivity extends AppCompatActivity {
                 }));
     }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (rxBluetooth != null) {
-            // Make sure we're not doing discovery anymore
-            Log.d(TAG, "cancelDiscovery");
-            rxBluetooth.cancelDiscovery();
-        }
-        Log.d(TAG, "compositeDisposable dispose");
-        compositeDisposable.dispose();
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String permissions[], @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_PERMISSION_COARSE_LOCATION) {
-            for (String permission : permissions) {
-                if (android.Manifest.permission.ACCESS_COARSE_LOCATION.equals(permission)) {
-                    // Start discovery if permission granted
-                    Log.d(TAG, "startDiscovery");
-                    rxBluetooth.startDiscovery();
-                }
-            }
-        }
-    }
-
     private void initEventListeners() {
 
         // Devices
@@ -277,8 +280,10 @@ public class MainActivity extends AppCompatActivity {
                 .subscribe(new Consumer<BluetoothDevice>() {
                     @Override
                     public void accept(@NonNull BluetoothDevice bluetoothDevice) {
-                        Log.d(TAG, "observeDevices device found: " + bluetoothDevice.getName());
+                        Log.d(TAG, "observeDevices device found: " + bluetoothDevice.getName() + " " + bluetoothDevice.getAddress());
                         addDevice(bluetoothDevice);
+                        rxBluetooth.cancelDiscovery();
+                        observeFetchDeviceUuids(bluetoothDevice);
                     }
                 }));
 
