@@ -246,23 +246,29 @@ public class MainActivity extends AppCompatActivity {
                         Log.d(TAG, "connectAsClient. Socket Remote Device Name: " + socket.getRemoteDevice().getName());
 
                         // Create connection
-                        /*bluetoothConnection = new BluetoothConnection(socket);
+                        try {
+                            bluetoothConnection = new BluetoothConnection(socket);
 
-                        // Observe String Stream Read
-                        bluetoothConnection.observeStringStream()
-                                .observeOn(AndroidSchedulers.mainThread())
-                                .subscribeOn(Schedulers.io())
-                                .subscribe(new Consumer<String>() {
-                                    @Override
-                                    public void accept(String string) throws Exception {
-                                        Log.d(TAG, "observeStringStream: " + string);
-                                    }
-                                }, new Consumer<Throwable>() {
-                                    @Override
-                                    public void accept(Throwable throwable) throws Exception {
-                                        Log.d(TAG, "Error observeStringStream: " + throwable.getMessage());
-                                    }
-                                });*/
+                            // Observe String Stream Read
+                            compositeDisposable.add(bluetoothConnection.observeStringStream()
+                                    .observeOn(AndroidSchedulers.mainThread())
+                                    .subscribeOn(Schedulers.io())
+                                    .subscribe(new Consumer<String>() {
+                                        @Override
+                                        public void accept(String string) throws Exception {
+                                            Log.d(TAG, "observeStringStream: " + string);
+                                        }
+                                    }, new Consumer<Throwable>() {
+                                        @Override
+                                        public void accept(Throwable throwable) throws Exception {
+                                            Log.d(TAG, "Error observeStringStream: " + throwable.getMessage());
+                                        }
+                                    }));
+
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+
                     }
                 }, new Consumer<Throwable>() {
                     @Override
