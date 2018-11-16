@@ -162,6 +162,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void observeFetchDeviceUuids(final BluetoothDevice device) {
+        Log.d(TAG, "observeFetchDeviceUuids: " + device.getName());
         compositeDisposable.add(rxBluetooth.observeFetchDeviceUuids(device)
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribeOn(Schedulers.computation())
