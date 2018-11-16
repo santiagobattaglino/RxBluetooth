@@ -282,8 +282,6 @@ public class MainActivity extends AppCompatActivity {
                     public void accept(@NonNull BluetoothDevice bluetoothDevice) {
                         Log.d(TAG, "observeDevices device found: " + bluetoothDevice.getName() + " " + bluetoothDevice.getAddress());
                         addDevice(bluetoothDevice);
-                        rxBluetooth.cancelDiscovery();
-                        observeFetchDeviceUuids(bluetoothDevice);
                     }
                 }));
 
@@ -301,6 +299,10 @@ public class MainActivity extends AppCompatActivity {
                                 break;
                             case BluetoothAdapter.ACTION_DISCOVERY_FINISHED:
                                 Log.d(TAG, "ACTION_DISCOVERY_FINISHED");
+                                if (devices.size() > 0) {
+                                    setAdapter(devices);
+                                    observeFetchDeviceUuids(devices.get(0));
+                                }
                                 start.setText(R.string.button_restart);
                                 break;
                         }
@@ -432,7 +434,6 @@ public class MainActivity extends AppCompatActivity {
 
     private void addDevice(BluetoothDevice device) {
         devices.add(device);
-        setAdapter(devices);
     }
 
     private void setAdapter(List<BluetoothDevice> list) {
