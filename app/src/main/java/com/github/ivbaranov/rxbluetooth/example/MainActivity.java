@@ -3,7 +3,7 @@ package com.github.ivbaranov.rxbluetooth.example;
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothServerSocket;
+import android.bluetooth.BluetoothProfile;
 import android.bluetooth.BluetoothSocket;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -31,15 +31,12 @@ import com.github.ivbaranov.rxbluetooth.RxBluetooth;
 import com.github.ivbaranov.rxbluetooth.events.AclEvent;
 import com.github.ivbaranov.rxbluetooth.events.BondStateEvent;
 import com.github.ivbaranov.rxbluetooth.events.ConnectionStateEvent;
+import com.github.ivbaranov.rxbluetooth.events.ServiceEvent;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-import io.reactivex.Single;
-import io.reactivex.SingleEmitter;
-import io.reactivex.SingleOnSubscribe;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.CompositeDisposable;
 import io.reactivex.functions.Consumer;
@@ -61,8 +58,7 @@ public class MainActivity extends AppCompatActivity {
 
     // Use 00001101-0000-1000-8000-00805F9B34FB for SPP service
     // (ex. Arduino) or use your own generated UUID.
-    // UUID uuid = UUID.fromString("0000110a-0000-1000-8000-00805f9b34fb");
-    private UUID mUUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+    private UUID mUUID = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb");
 
     // Connection from bluetoothSocket
     private BluetoothConnection bluetoothConnection;
@@ -71,10 +67,14 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        start = (Button) findViewById(R.id.start);
-        stop = (Button) findViewById(R.id.stop);
-        result = (ListView) findViewById(R.id.result);
 
+        // Service Instance
+        bluetoothServiceIntent = new Intent(MainActivity.this, BluetoothService.class);
+
+        // RxBluetooth Instance
+        rxBluetooth = new RxBluetooth(this);
+
+        // Toolbar
         toolbar = (Toolbar) findViewById(R.id.toolbar);
         toolbar.setTitle("RxBluetooth");
         toolbar.inflateMenu(R.menu.main_menu);
@@ -103,34 +103,44 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        bluetoothServiceIntent = new Intent(MainActivity.this, BluetoothService.class);
-
-        rxBluetooth = new RxBluetooth(this);
-
+        // Devices ListView
+        result = (ListView) findViewById(R.id.result);
         result.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @SuppressLint("CheckResult")
             @Override
             public void onItemClick(AdapterView<?> parent, View view, final int position, long id) {
-                Log.d(TAG, "onItemClick: " + devices.get(position).getName());
-                observeFetchDeviceUuids(devices.get(position));
+                doOnClickDeviceFound(devices.get(position));
             }
         });
 
+        // Start Discovery
+        start = (Button) findViewById(R.id.start);
+        start.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                doStart();
+            }
+        });
+
+        // Stop Discovery
+        stop = (Button) findViewById(R.id.stop);
+        stop.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rxBluetooth.cancelDiscovery();
+            }
+        });
+
+        // BT Availability
         if (!rxBluetooth.isBluetoothAvailable()) {
-            // handle the lack of bluetooth support
-            Log.d(TAG, "Bluetooth is not supported!");
+            Log.d(TAG, "Bluetooth is not supported");
         } else {
-            initEventListeners();
-            doStart();
-            // check if bluetooth is currently enabled and ready for use
+            Log.d(TAG, "Bluetooth supported");
             if (!rxBluetooth.isBluetoothEnabled()) {
-                // to enable bluetooth via startActivityForResult()
                 Log.d(TAG, "Enabling Bluetooth");
                 rxBluetooth.enableBluetooth(this, REQUEST_ENABLE_BT);
             } else {
-                // you are ready
-                Log.d(TAG, "Bluetooth Enabled!");
-                start.setBackgroundColor(getResources().getColor(R.color.colorActive, null));
+                doOnBTAvaliableAndEnabled();
             }
         }
     }
@@ -161,268 +171,23 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void observeFetchDeviceUuids(final BluetoothDevice device) {
-        Log.d(TAG, "observeFetchDeviceUuids: " + device.getName());
-        compositeDisposable.add(rxBluetooth.observeFetchDeviceUuids(device)
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<Parcelable[]>() {
-                    @Override
-                    public void accept(final Parcelable[] uuids) {
-                        Log.d(TAG, "observeFetchDeviceUUIDs UUID[0]: " + uuids[0]);
-                        //connectAsServer("myserver", uuids[0].toString());
-                        //connectAsServerInsecure("myserver", uuids[0].toString());
-                        connectAsClient(device, uuids[0].toString());
-                    }
-                }, new Consumer<Throwable>() {
-                    @Override
-                    public void accept(Throwable throwable) {
-                        Log.d(TAG, "Error observeFetchDeviceUUIDs: " + throwable.getMessage());
-                    }
-                }));
+    private void doOnClickDeviceFound(BluetoothDevice device) {
+        Log.d(TAG, "onItemClick: " + device.getName() + " " + device.getAddress());
+
+        if (rxBluetooth.isDiscovering())
+            rxBluetooth.cancelDiscovery();
+
+        if (device.getBondState() == BluetoothDevice.BOND_NONE) {
+            device.createBond();
+        } else {
+            observeConnectAsClient(device, mUUID);
+        }
     }
 
-    private void connectAsServer(String servername, final String uuid) {
-        Log.d(TAG, "rxBluetooth.connectAsServer");
-        compositeDisposable.add(rxBluetooth.connectAsServer(servername, UUID.fromString(uuid))
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<BluetoothSocket>() {
-                    @Override
-                    public void accept(BluetoothSocket socket) {
-                        Log.d(TAG, "connectAsServer. Socket Remote Device Name: " + socket.getRemoteDevice().getName());
-                        connectAsClient(socket.getRemoteDevice(), uuid);
-                    }
-                }, new Consumer<Throwable>() {
-                    @Override
-                    public void accept(Throwable throwable) {
-                        Log.d(TAG, "Error connectAsServer: " + throwable.getMessage());
-                    }
-                }));
-    }
-
-    private void connectAsServerInsecure(String servername, final String uuid) {
-        Log.d(TAG, "rxBluetooth.connectAsServerInsecure");
-        compositeDisposable.add(rxConnectAsServerInsecure(servername, UUID.fromString(uuid))
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<BluetoothSocket>() {
-                    @Override
-                    public void accept(BluetoothSocket socket) {
-                        Log.d(TAG, "connectAsServerInsecure. Socket Remote Device Name: " + socket.getRemoteDevice().getName());
-                        connectAsClient(socket.getRemoteDevice(), uuid);
-                    }
-                }, new Consumer<Throwable>() {
-                    @Override
-                    public void accept(Throwable throwable) {
-                        Log.d(TAG, "Error connectAsServerInsecure: " + throwable.getMessage());
-                    }
-                }));
-    }
-
-    private Single<BluetoothSocket> rxConnectAsServerInsecure(final String name, final UUID uuid) {
-        return Single.create(new SingleOnSubscribe<BluetoothSocket>() {
-            @Override
-            public void subscribe(@io.reactivex.annotations.NonNull SingleEmitter<BluetoothSocket> emitter) {
-                try {
-                    try (BluetoothServerSocket bluetoothServerSocket = BluetoothAdapter.getDefaultAdapter().listenUsingInsecureRfcommWithServiceRecord(name, uuid)) {
-                        emitter.onSuccess(bluetoothServerSocket.accept());
-                    }
-                } catch (IOException e) {
-                    emitter.onError(e);
-                }
-            }
-        });
-    }
-
-    private void connectAsClient(BluetoothDevice device, String uuid) {
-        Log.d(TAG, "rxBluetooth.connectAsClient");
-        compositeDisposable.add(rxBluetooth.connectAsClient(device, UUID.fromString(uuid))
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<BluetoothSocket>() {
-                    @Override
-                    public void accept(BluetoothSocket socket) {
-                        Log.d(TAG, "connectAsClient. Socket Remote Device Name: " + socket.getRemoteDevice().getName());
-
-                        // Create connection
-                        try {
-                            bluetoothConnection = new BluetoothConnection(socket);
-
-                            // Observe String Stream Read
-                            compositeDisposable.add(bluetoothConnection.observeStringStream()
-                                    .observeOn(AndroidSchedulers.mainThread())
-                                    .subscribeOn(Schedulers.io())
-                                    .subscribe(new Consumer<String>() {
-                                        @Override
-                                        public void accept(String string) throws Exception {
-                                            Log.d(TAG, "observeStringStream: " + string);
-                                        }
-                                    }, new Consumer<Throwable>() {
-                                        @Override
-                                        public void accept(Throwable throwable) throws Exception {
-                                            Log.d(TAG, "Error observeStringStream: " + throwable.getMessage());
-                                        }
-                                    }));
-
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        }
-
-                    }
-                }, new Consumer<Throwable>() {
-                    @Override
-                    public void accept(Throwable throwable) {
-                        Log.d(TAG, "Error connectAsClient: " + throwable.getMessage());
-                    }
-                }));
-    }
-
-    private void initEventListeners() {
-
-        // Devices
-        compositeDisposable.add(rxBluetooth.observeDevices()
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<BluetoothDevice>() {
-                    @Override
-                    public void accept(@NonNull BluetoothDevice bluetoothDevice) {
-                        Log.d(TAG, "observeDevices device found: " + bluetoothDevice.getName() + " " + bluetoothDevice.getAddress());
-                        addDevice(bluetoothDevice);
-                    }
-                }));
-
-        // Discovery
-        compositeDisposable.add(rxBluetooth.observeDiscovery()
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<String>() {
-                    @Override
-                    public void accept(String action) {
-                        switch (action) {
-                            case BluetoothAdapter.ACTION_DISCOVERY_STARTED:
-                                Log.d(TAG, "ACTION_DISCOVERY_STARTED");
-                                start.setText(R.string.button_searching);
-                                break;
-                            case BluetoothAdapter.ACTION_DISCOVERY_FINISHED:
-                                Log.d(TAG, "ACTION_DISCOVERY_FINISHED");
-                                if (devices.size() > 0) {
-                                    setAdapter(devices);
-                                    observeFetchDeviceUuids(devices.get(0));
-                                }
-                                start.setText(R.string.button_restart);
-                                break;
-                        }
-
-                    }
-                }));
-
-        // BT State
-        compositeDisposable.add(rxBluetooth.observeBluetoothState()
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<Integer>() {
-                    @Override
-                    public void accept(Integer integer) {
-                        switch (integer) {
-                            case BluetoothAdapter.STATE_OFF:
-                                start.setBackgroundColor(getResources().getColor(R.color.colorInactive, null));
-                                Log.d(TAG, "STATE_OFF");
-                                break;
-                            case BluetoothAdapter.STATE_TURNING_ON:
-                                start.setBackgroundColor(getResources().getColor(R.color.colorInactive, null));
-                                Log.d(TAG, "STATE_TURNING_ON");
-                                break;
-                            case BluetoothAdapter.STATE_ON:
-                                start.setBackgroundColor(getResources().getColor(R.color.colorActive, null));
-                                Log.d(TAG, "STATE_ON");
-                                break;
-                            case BluetoothAdapter.STATE_TURNING_OFF:
-                                start.setBackgroundColor(getResources().getColor(R.color.colorInactive, null));
-                                Log.d(TAG, "STATE_TURNING_OFF");
-                                break;
-                        }
-                    }
-                }));
-
-        // Bond
-        compositeDisposable.add(rxBluetooth.observeBondState()
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<BondStateEvent>() {
-                    @Override
-                    public void accept(BondStateEvent event) {
-                        switch (event.getState()) {
-                            case BluetoothDevice.BOND_NONE:
-                                Log.d(TAG, "device unbonded");
-                                break;
-                            case BluetoothDevice.BOND_BONDING:
-                                Log.d(TAG, "device bonding");
-                                break;
-                            case BluetoothDevice.BOND_BONDED:
-                                Log.d(TAG, "device bonded");
-                                break;
-                        }
-                    }
-                }));
-
-        // Connection
-        compositeDisposable.add(rxBluetooth.observeConnectionState()
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<ConnectionStateEvent>() {
-                    @Override
-                    public void accept(ConnectionStateEvent event) {
-                        switch (event.getState()) {
-                            case BluetoothAdapter.STATE_DISCONNECTED:
-                                Log.d(TAG, "disconnected: " + event.getBluetoothDevice().getName());
-                                break;
-                            case BluetoothAdapter.STATE_CONNECTING:
-                                Log.d(TAG, "connecting: " + event.getBluetoothDevice().getName());
-                                break;
-                            case BluetoothAdapter.STATE_CONNECTED:
-                                Log.d(TAG, "connected: " + event.getBluetoothDevice().getName());
-                                break;
-                            case BluetoothAdapter.STATE_DISCONNECTING:
-                                Log.d(TAG, "disconnecting: " + event.getBluetoothDevice().getName());
-                                break;
-                        }
-                    }
-                }));
-
-        // ACL
-        compositeDisposable.add(rxBluetooth.observeAclEvent() //
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new Consumer<AclEvent>() {
-                    @Override
-                    public void accept(AclEvent aclEvent) {
-                        switch (aclEvent.getAction()) {
-                            case BluetoothDevice.ACTION_ACL_CONNECTED:
-                                Log.d(TAG, "ACTION_ACL_CONNECTED: " + aclEvent.getBluetoothDevice().getName());
-                                break;
-                            case BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED:
-                                Log.d(TAG, "ACTION_ACL_DISCONNECT_REQUESTED: " + aclEvent.getBluetoothDevice().getName());
-                                break;
-                            case BluetoothDevice.ACTION_ACL_DISCONNECTED:
-                                Log.d(TAG, "ACTION_ACL_DISCONNECTED: " + aclEvent.getBluetoothDevice().getName());
-                                break;
-                        }
-                    }
-                }));
-
-        start.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                doStart();
-            }
-        });
-        stop.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                rxBluetooth.cancelDiscovery();
-            }
-        });
+    private void doOnBTAvaliableAndEnabled() {
+        Log.d(TAG, "Bluetooth Avaliable and Enabled");
+        start.setBackgroundColor(getResources().getColor(R.color.colorActive, null));
+        initEventObservers();
     }
 
     private void doStart() {
@@ -441,6 +206,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void addDevice(BluetoothDevice device) {
         devices.add(device);
+        setAdapter(devices);
     }
 
     private void setAdapter(List<BluetoothDevice> list) {
@@ -470,5 +236,302 @@ public class MainActivity extends AppCompatActivity {
 
     private void showToast(String message) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
+
+    private void initEventObservers() {
+        observeDevices();
+        observeDiscovery();
+        observeBTState();
+        observeScanMode();
+        //observeProfile(BluetoothProfile.HEADSET);
+        observeBond();
+        observeConnectionState();
+        //observeAclEvent();
+    }
+
+    private void observeDevices() {
+        compositeDisposable.add(rxBluetooth.observeDevices()
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<BluetoothDevice>() {
+                    @Override
+                    public void accept(@NonNull BluetoothDevice bluetoothDevice) {
+                        Log.d(TAG, "observeDevices device found: " + bluetoothDevice.getName() + " " + bluetoothDevice.getAddress());
+                        addDevice(bluetoothDevice);
+                    }
+                }));
+    }
+
+    private void observeDiscovery() {
+        compositeDisposable.add(rxBluetooth.observeDiscovery()
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<String>() {
+                    @Override
+                    public void accept(String action) {
+                        switch (action) {
+                            case BluetoothAdapter.ACTION_DISCOVERY_STARTED:
+                                Log.d(TAG, "ACTION_DISCOVERY_STARTED");
+                                start.setText(R.string.button_searching);
+                                break;
+                            case BluetoothAdapter.ACTION_DISCOVERY_FINISHED:
+                                Log.d(TAG, "ACTION_DISCOVERY_FINISHED");
+                                start.setText(R.string.button_restart);
+                                break;
+                        }
+
+                    }
+                }));
+    }
+
+    private void observeBTState() {
+        compositeDisposable.add(rxBluetooth.observeBluetoothState()
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<Integer>() {
+                    @Override
+                    public void accept(Integer integer) {
+                        switch (integer) {
+                            case BluetoothAdapter.STATE_OFF:
+                                start.setBackgroundColor(getResources().getColor(R.color.colorInactive, null));
+                                Log.d(TAG, "STATE_OFF");
+                                break;
+                            case BluetoothAdapter.STATE_TURNING_ON:
+                                start.setBackgroundColor(getResources().getColor(R.color.colorInactive, null));
+                                Log.d(TAG, "STATE_TURNING_ON");
+                                break;
+                            case BluetoothAdapter.STATE_ON:
+                                start.setBackgroundColor(getResources().getColor(R.color.colorActive, null));
+                                Log.d(TAG, "STATE_ON");
+                                break;
+                            case BluetoothAdapter.STATE_TURNING_OFF:
+                                start.setBackgroundColor(getResources().getColor(R.color.colorInactive, null));
+                                Log.d(TAG, "STATE_TURNING_OFF");
+                                break;
+                        }
+                    }
+                }));
+    }
+
+    private void observeScanMode() {
+        compositeDisposable.add(rxBluetooth.observeScanMode()
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<Integer>() {
+                    @Override
+                    public void accept(Integer integer) {
+                        switch (integer) {
+                            case BluetoothAdapter.SCAN_MODE_NONE:
+                                Log.d(TAG, "SCAN_MODE_NONE");
+                                break;
+                            case BluetoothAdapter.SCAN_MODE_CONNECTABLE:
+                                Log.d(TAG, "SCAN_MODE_CONNECTABLE");
+                                break;
+                            case BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE:
+                                Log.d(TAG, "SCAN_MODE_CONNECTABLE_DISCOVERABLE");
+                                break;
+                        }
+                    }
+                }));
+    }
+
+    private void observeProfile(int bluetoothProfile) {
+        compositeDisposable.add(rxBluetooth.observeBluetoothProfile(bluetoothProfile)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<ServiceEvent>() {
+                    @Override
+                    public void accept(ServiceEvent serviceEvent) {
+                        switch (serviceEvent.getState()) {
+                            case CONNECTED:
+                                BluetoothProfile bluetoothProfile = serviceEvent.getBluetoothProfile();
+                                List<BluetoothDevice> devices = bluetoothProfile.getConnectedDevices();
+                                for (final BluetoothDevice device : devices) {
+                                    Log.d(TAG, "observeBluetoothProfile CONNECTED: " + device.getName());
+                                }
+                                break;
+                            case DISCONNECTED:
+                                Log.d(TAG, "observeBluetoothProfile DISCONNECTED: " + serviceEvent.getBluetoothProfile());
+                                break;
+                        }
+                    }
+                }));
+    }
+
+    private void observeBond() {
+        compositeDisposable.add(rxBluetooth.observeBondState()
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<BondStateEvent>() {
+                    @Override
+                    public void accept(BondStateEvent event) {
+                        switch (event.getState()) {
+                            case BluetoothDevice.BOND_NONE:
+                                Log.d(TAG, "device unbonded");
+                                break;
+                            case BluetoothDevice.BOND_BONDING:
+                                Log.d(TAG, "device bonding");
+                                break;
+                            case BluetoothDevice.BOND_BONDED:
+                                Log.d(TAG, "device bonded");
+                                break;
+                        }
+                    }
+                }));
+    }
+
+    private void observeConnectionState() {
+        compositeDisposable.add(rxBluetooth.observeConnectionState()
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<ConnectionStateEvent>() {
+                    @Override
+                    public void accept(ConnectionStateEvent event) {
+                        switch (event.getState()) {
+                            case BluetoothAdapter.STATE_DISCONNECTED:
+                                Log.d(TAG, "disconnected: " + event.getBluetoothDevice().getName());
+                                break;
+                            case BluetoothAdapter.STATE_CONNECTING:
+                                Log.d(TAG, "connecting: " + event.getBluetoothDevice().getName());
+                                break;
+                            case BluetoothAdapter.STATE_CONNECTED:
+                                Log.d(TAG, "connected: " + event.getBluetoothDevice().getName());
+                                break;
+                            case BluetoothAdapter.STATE_DISCONNECTING:
+                                Log.d(TAG, "disconnecting: " + event.getBluetoothDevice().getName());
+                                break;
+                        }
+                    }
+                }));
+    }
+
+    private void observeAclEvent() {
+        compositeDisposable.add(rxBluetooth.observeAclEvent()
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<AclEvent>() {
+                    @Override
+                    public void accept(AclEvent aclEvent) {
+                        switch (aclEvent.getAction()) {
+                            case BluetoothDevice.ACTION_ACL_CONNECTED:
+                                Log.d(TAG, "ACTION_ACL_CONNECTED: " + aclEvent.getBluetoothDevice().getName());
+                                break;
+                            case BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED:
+                                Log.d(TAG, "ACTION_ACL_DISCONNECT_REQUESTED: " + aclEvent.getBluetoothDevice().getName());
+                                break;
+                            case BluetoothDevice.ACTION_ACL_DISCONNECTED:
+                                Log.d(TAG, "ACTION_ACL_DISCONNECTED: " + aclEvent.getBluetoothDevice().getName());
+                                break;
+                        }
+                    }
+                }));
+    }
+
+    private void observeFetchDeviceUuids(final BluetoothDevice device) {
+        Log.d(TAG, "observeFetchDeviceUuids: " + device.getName());
+        compositeDisposable.add(rxBluetooth.observeFetchDeviceUuids(device)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<Parcelable[]>() {
+                    @Override
+                    public void accept(final Parcelable[] uuids) {
+                        Log.d(TAG, "observeFetchDeviceUUIDs UUID[0]: " + uuids[0]);
+                        mUUID = UUID.fromString(uuids[0].toString());
+                        observeConnectAsServer("myserver", mUUID);
+                    }
+                }, new Consumer<Throwable>() {
+                    @Override
+                    public void accept(Throwable throwable) {
+                        Log.d(TAG, "Error observeFetchDeviceUUIDs: " + throwable.getMessage());
+                    }
+                }));
+    }
+
+    private void observeConnectAsServer(String servername, final UUID uuid) {
+        Log.d(TAG, "rxBluetooth.observeConnectAsServer");
+        compositeDisposable.add(rxBluetooth.connectAsServer(servername, uuid)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<BluetoothSocket>() {
+                    @Override
+                    public void accept(BluetoothSocket socket) {
+                        Log.d(TAG, "observeConnectAsServer. Socket Remote Device Name: " + socket.getRemoteDevice().getName());
+                    }
+                }, new Consumer<Throwable>() {
+                    @Override
+                    public void accept(Throwable throwable) {
+                        Log.d(TAG, "Error observeConnectAsServer: " + throwable.getMessage());
+                    }
+                }));
+    }
+
+    private void observeConnectAsClient(BluetoothDevice device, UUID uuid) {
+        Log.d(TAG, "rxBluetooth.observeConnectAsClient");
+        compositeDisposable.add(rxBluetooth.connectAsClient(device, uuid)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.computation())
+                .subscribe(new Consumer<BluetoothSocket>() {
+                    @Override
+                    public void accept(BluetoothSocket socket) {
+                        Log.d(TAG, "observeConnectAsClient. Socket Remote Device Name: " + socket.getRemoteDevice().getName());
+                        createConnectionFromSocket(socket);
+                    }
+                }, new Consumer<Throwable>() {
+                    @Override
+                    public void accept(Throwable throwable) {
+                        Log.d(TAG, "Error observeConnectAsClient: " + throwable.getMessage());
+                    }
+                }));
+    }
+
+    private void createConnectionFromSocket(BluetoothSocket socket) {
+        try {
+            bluetoothConnection = new BluetoothConnection(socket);
+            observeInputStream();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void observeInputStream() {
+        //observeInputByteStream();
+        observeInputStringStream();
+    }
+
+    private void observeInputByteStream() {
+        compositeDisposable.add(bluetoothConnection.observeByteStream().observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.io())
+                .subscribe(new Consumer<Byte>() {
+                    @Override
+                    public void accept(Byte aByte) {
+                        Log.d(TAG, "observeInputByteStream: " + aByte);
+                    }
+                }, new Consumer<Throwable>() {
+                    @Override
+                    public void accept(Throwable throwable) {
+                        Log.d(TAG, "Error observeInputByteStream: " + throwable.getMessage());
+                    }
+                }));
+    }
+
+    private void observeInputStringStream() {
+        compositeDisposable.add(bluetoothConnection.observeStringStream()
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeOn(Schedulers.io())
+                .subscribe(new Consumer<String>() {
+                    @Override
+                    public void accept(String string) {
+                        Log.d(TAG, "observeInputStringStream: " + string);
+                    }
+                }, new Consumer<Throwable>() {
+                    @Override
+                    public void accept(Throwable throwable) {
+                        Log.d(TAG, "Error observeInputStringStream: " + throwable.getMessage());
+                    }
+                }));
+    }
+
+    private void sendTextToConnectedClient() {
+        bluetoothConnection.send("text");
     }
 }
