@@ -155,6 +155,7 @@ public class MainActivity extends AppCompatActivity {
             // Make sure we're not doing discovery anymore
             Log.d(TAG, "cancelDiscovery");
             rxBluetooth.cancelDiscovery();
+            bluetoothConnection.closeConnection();
         }
         Log.d(TAG, "compositeDisposable dispose");
         compositeDisposable.dispose();
@@ -325,6 +326,8 @@ public class MainActivity extends AppCompatActivity {
                         switch (integer) {
                             case BluetoothAdapter.STATE_OFF:
                                 start.setBackgroundColor(getResources().getColor(R.color.colorInactive, null));
+                                devices.clear();
+                                setAdapter(devices);
                                 Log.d(TAG, "STATE_OFF");
                                 break;
                             case BluetoothAdapter.STATE_TURNING_ON:
@@ -517,6 +520,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void createConnectionFromSocket(BluetoothSocket socket) {
         try {
+            Log.d(TAG, "Creating connection from socket");
             bluetoothConnection = new BluetoothConnection(socket);
             observeInputStream();
         } catch (Exception e) {
