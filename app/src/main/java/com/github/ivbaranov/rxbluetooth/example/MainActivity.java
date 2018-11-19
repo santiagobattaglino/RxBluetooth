@@ -35,6 +35,8 @@ import com.github.ivbaranov.rxbluetooth.events.ServiceEvent;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 import io.reactivex.android.schedulers.AndroidSchedulers;
@@ -51,6 +53,7 @@ public class MainActivity extends AppCompatActivity {
     private Button stop;
     private ListView result;
     private Toolbar toolbar;
+
     private RxBluetooth rxBluetooth;
     private CompositeDisposable compositeDisposable = new CompositeDisposable();
     private List<BluetoothDevice> devices = new ArrayList<>();
@@ -104,7 +107,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Devices ListView
-        result = (ListView) findViewById(R.id.result);
+        result = findViewById(R.id.result);
         result.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @SuppressLint("CheckResult")
             @Override
@@ -114,7 +117,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Start Discovery
-        start = (Button) findViewById(R.id.start);
+        start = findViewById(R.id.start);
         start.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -123,7 +126,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Stop Discovery
-        stop = (Button) findViewById(R.id.stop);
+        stop = findViewById(R.id.stop);
         stop.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -171,6 +174,17 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_ENABLE_BT) {
+            if (resultCode == RESULT_OK) {
+                doOnBTAvaliableAndEnabled();
+            } else {
+                finish();
+            }
+        }
+    }
+
     private void doOnClickDeviceFound(BluetoothDevice device) {
         Log.d(TAG, "onItemClick: " + device.getName() + " " + device.getAddress());
 
@@ -187,12 +201,22 @@ public class MainActivity extends AppCompatActivity {
     private void doOnBTAvaliableAndEnabled() {
         Log.d(TAG, "Bluetooth Avaliable and Enabled");
         start.setBackgroundColor(getResources().getColor(R.color.colorActive, null));
+        showBondedDevices();
         initEventObservers();
+    }
+
+    private void showBondedDevices() {
+        Set<BluetoothDevice> bondedDevices = rxBluetooth.getBondedDevices();
+        if (bondedDevices != null) {
+            devices.addAll(bondedDevices);
+            setAdapter(devices);
+        }
     }
 
     private void doStart() {
         devices.clear();
         setAdapter(devices);
+
         if (ContextCompat.checkSelfPermission(MainActivity.this,
                 android.Manifest.permission.ACCESS_COARSE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -200,6 +224,7 @@ public class MainActivity extends AppCompatActivity {
                     new String[]{android.Manifest.permission.ACCESS_COARSE_LOCATION},
                     REQUEST_PERMISSION_COARSE_LOCATION);
         } else {
+            showBondedDevices();
             rxBluetooth.startDiscovery();
         }
     }
@@ -218,7 +243,13 @@ public class MainActivity extends AppCompatActivity {
                 View view = super.getView(position, convertView, parent);
 
                 BluetoothDevice device = devices.get(position);
-                String devName = device.getName();
+
+                String bondState = "Device Discovered";
+                if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
+                    bondState = " (Device Bonded or Paired)";
+                }
+                String devName = String.format(Locale.getDefault(), "%s %s", device.getName(), bondState);
+
                 String devAddress = device.getAddress();
 
                 if (TextUtils.isEmpty(devName)) {
